@@ -1,0 +1,139 @@
+---
+title: "DSFProject"
+author: "A. Riley"
+date: "2022-07-23"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Data Science as a Field - Project
+
+The dataset used is NYPD Shooting Incident Data (Historic). It includes every shooting occurring in NYC from 2006 to the end of last calendar year - December 2021.
+
+
+### Importing the data
+
+```{r import_data}
+shootingData <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+### Checking the data
+```{r view_data}
+head(shootingData)
+```
+### Cleaning the data
+
+Remove the column "Lat_Lon" since it is redundantly encoded in the "Latitude" and "Longitude" columns. Removal of several other variables not used in this analysis. Remove any rows with missing values.
+
+``` {r clean_data}
+shootingData <- select(shootingData, -c(Lon_Lat,OCCUR_TIME,PRECINCT, JURISDICTION_CODE,LOCATION_DESC, STATISTICAL_MURDER_FLAG, X_COORD_CD,Y_COORD_CD))
+shootingData <- na.omit(shootingData)
+head(shootingData)
+```
+### Planning Analysis
+
+I'd like to understand the number of incidents over time, and if there is any trends there. 
+
+I plan to make a bar chart of incidents over time, binned by year. For this I would need the incident number and date. And I can bin by year and count.
+
+I'd also like to understand if there is a trend for locations of incidents.
+
+I would like to make a map of Incidents with scroll over for some feature. 
+
+It also would be interesting to understand demographic trends. 
+I could make a pie chart or some other parts of a whole analysis and display victim/perp age group or race.
+
+### Visualizing Data
+
+#### Bar Chart
+Clean the data for the bar chart by changing the date to the correct format:
+```{r bar_chart}
+library(ggplot2)
+shootingData$OCCUR_DATE <- as.Date(shootingData$OCCUR_DATE, format = "%m/%d/%Y")
+shootingData$YEAR <- format(shootingData$OCCUR_DATE, format = "%Y")
+shootingData$MONTH <- format(shootingData$OCCUR_DATE, format = "%m")
+head(shootingData)
+```
+
+Plot a bar chart:
+```{r bar}
+bar_year <- ggplot(data=shootingData, aes(x=YEAR)) +
+  geom_bar(fill = "cornflowerblue", color="black") +
+  theme(axis.text.x = element_text(angle = 45))
+bar_year
+
+bar_month <- ggplot(data=shootingData, aes(x=MONTH)) +
+  geom_bar(fill = "darkblue", color="black") +
+  theme(axis.text.x = element_text(angle = 45))
+bar_month
+
+bar_boro <- ggplot(data=shootingData, aes(x=BORO)) +
+  geom_bar(fill = "lightblue", color="black") +
+  theme(axis.text.x = element_text(angle = 90))
+bar_boro
+```
+
+
+It appears there was a downward trend in shooting incidents until 2020. This would be interesting to investigate further. There also seems to be more incidents in the summer months. It seems like Brooklyn has the most incidents. 
+
+#### Incident Location Map
+Install the packages needed:
+```{r install}
+library(leaflet)
+```
+
+Clean the data for this analysis:
+Since this is a large dataset that covers a small geographical area, I'll only include shooting incidents from the most recent calendar year for clarity.
+
+``` {r 2021_data}
+lastYear = filter(shootingData, YEAR == "2021")
+```
+
+Generate the map with zoom of NYC with the incident location displayed as points, with the incident occurrence date displayed when clicked:
+
+```{r map}
+leaflet(data=lastYear) %>%
+  addTiles() %>%
+  setView(-74.00, 40.71, zoom = 10) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addMarkers(~Longitude, ~Latitude, popup = ~as.character(OCCUR_DATE))
+```
+
+There is still quite a lot of points on this visualization, which muddies the point. It may be more digestible to instead use a color gradient representing average number of shooting incidents by borough, neighborhood, or some more granular geographical unit.
+
+### Modeling the Data
+I wanted to model month and borough's impact on incidents. I had trouble making this model, since the dimensions were different. With more time to think about it, I might be able to accomplish this (input welcome). To try to make an easier model, I thought population and incident rate would be correlated. It would make sense that incidents increase with population. To understand this, I added population estimates for 2021 (source: US Census Bureau) and calculated incidents per 1000 people. This is not a very good model, and would be improved with more time and iterations. 
+
+``````{r modeling}
+library(dplyr)
+
+
+incidentRate <- data.frame(
+  BORO = c("Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"), 
+  POP = c(1424948, 2641052, 1576876, 2331143, 493494), 
+  POPby1k = c(1424.948, 2641.052, 1576.876, 2331.143, 493.494), 
+  incCount = c(358, 242, 207, 131, 24),
+  incPer1k = c(0.25123724, 0.09163015, 0.13127221, 0.05619561, 0.04863281))
+
+
+lmod <- lm(POP~incPer1k, data = incidentRate)
+summary(lmod)
+
+```
+
+### Conclusion
+This is a large data set that can generate lots of interesting questions. From my brief investigation of the data, I have identified several interesting follow-up questions and plans for analysis. Many other interesting questions exist that I did not mention, like analysis of boroughs and victim/perp demographics
+
+
+### Bias Statement
+#### Personal
+I did not choose this data set to work with, it was assigned to me. I am for sensible gun laws, I understand that not all gun incidents involve legally-obtained guns, and not all incidents are reported.
+
+### Data Source
+Data is sourced from NYPD. Not all gun violence incidents are reported. 
