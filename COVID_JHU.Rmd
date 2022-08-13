@@ -1,0 +1,177 @@
+---
+title: "Covid_Data_JHU"
+author: "A. Riley"
+date: "2022-08-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Johns Hopkins University COVID-19 Dataset
+
+### Importing the data
+The first thing we need to do is import the dataset from the github site. I've copied and pasted the urls into a variable, and then used the tidyverse read_csv() function to read in two of the data sets. Cases is the data for confirmed US cases, and deaths is the data for US deaths. I have left out global cases and deaths for this analysis.
+
+```{r import data}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+urls <-c("https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv", "https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+cases <- read_csv(urls[1])
+deaths <- read_csv(urls[2])
+```
+
+Once the data is read in, we need to see what it looks like. We'll do that by looking at the head() of the data.
+
+```{r check_data}
+head(cases)
+head(deaths)
+```
+
+### Cleaning the Data
+It seems that the data table is set up so that it shows the total per day, many of which are zero. That is not really what we want it to look like. 
+
+First, let's remove the data we won't need for the analysis. All we need is the City (Admin2), the state (Province_State), the dates and the cases. So, let's remove everything else:
+
+```{r removals}
+cases <- cases %>%
+  select(-c(Lat, Long_, UID, iso2, iso3, code3, FIPS, Combined_Key))
+```
+
+Next, let's tidy the table so that each date is a separate row:
+```{r pivot}
+cases <- cases %>%
+  pivot_longer(-c(Province_State, Admin2, Country_Region),
+               names_to = "date",
+               values_to = "cases")
+```
+
+Let's check to see that it worked:
+```{r check_tidy}
+tail(cases)
+```
+
+Looks good! Let's repeat this with the deaths data set. Notice here we have population, we will leave that for now since it might be interesting data for modeling :
+```{r tidy_deaths}
+deaths <- deaths %>%
+  select(-c(Lat, Long_, UID, iso2, iso3, code3, FIPS, Combined_Key)) %>%
+  pivot_longer(-c(Province_State, Admin2, Population, Country_Region),
+               names_to = "date",
+               values_to = "deaths")
+tail(deaths)
+```
+
+The last thing we need to do is to make sure that R is reading the date as a date object. Right now it's not, so we'll change that: 
+
+```{r dates}
+cases$date <- as.Date(cases$date, format = "%m/%d/%y")
+deaths$date <- as.Date(deaths$date, format = "%m/%d/%y")
+```
+
+### Begin analysis
+
+Let's start with looking at a summary of the cases
+
+```{r case_sum}
+summary(cases)
+```
+It shows the minimum case being negative, and that doesn't really make sense. There are also quite a few days with 0 cases, so let's get rid of those.
+
+```{r cases_filter}
+cases <- cases %>% filter(cases > 0)
+summary(cases)
+```
+
+That's better. Let's do the same thing for deaths
+
+```{r filter_deaths}
+deaths <- deaths %>% filter(deaths > 0)
+summary(deaths)
+```
+Now let's combine the tables into one that displays population, cases and deaths
+
+```{r combine}
+us <- cases %>%
+  full_join(deaths)
+summary(us)
+tail(us)
+```
+
+Let's do a bit of analysis on the data to get some interesting statistics:
+
+```{r stats}
+
+us <- na.omit(us)
+
+usByState <- us %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), population = sum(Population)) %>%
+  mutate(deathPerMil = deaths*1000000/population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deathPerMil, population) %>%
+  ungroup()
+
+usTotals <- us %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), population = sum(Population)) %>%
+  mutate(deathPerMil = deaths*1000000/population) %>%
+  select(Country_Region, date, cases, deaths, deathPerMil, population) %>%
+  ungroup()
+
+head(usTotals)
+```
+
+
+### Visualize Data
+
+Now that our data is tidy and we've done a bit of analysis on it, we can begin visualizing the data. 
+
+```{r firstVis}
+usTotals %>%
+  ggplot(aes(x=date, y=cases)) +
+  geom_line(aes(color="cases")) +
+  geom_point(aes(color="cases")) +
+  geom_line(aes(y=deaths, color="deaths")) +
+  geom_point(aes(y=deaths, color="deaths")) +
+  scale_y_log10() +
+  theme(legend.position="bottom", axis.text.x=element_text(angle=45)) + 
+  labs(title="COVID-19 in the US", y=NULL)
+
+```
+For those who aren't familiar with logarithmic scale, or if you did not make it obvious that this transformation was performed on your data, this graph can make it look like cases are flattening out. Let's do some investigation into this question:
+We can add columns that calculate the new cases and deaths, and then visualize those in the same manner:
+
+```{r newcases}
+usTotals <- usTotals %>%
+  mutate(newCases = cases - lag(cases), newDeaths = deaths - lag(deaths))
+
+
+usTotals %>%
+  ggplot(aes(x=date, y=newCases)) +
+  geom_line(aes(color="newCases")) +
+  geom_point(aes(color="newCases")) +
+  geom_line(aes(y=deaths, color="newDeaths")) +
+  geom_point(aes(y=deaths, color="newDeaths")) +
+  scale_y_log10() +
+  theme(legend.position="bottom", axis.text.x=element_text(angle=45)) + 
+  labs(title="New COVID-19 cases and deaths in the US", y=NULL)
+```
+
+From here we can see that there is an undulating curve of new cases, with them remaining high but dropping and rising over time. It is still not close to the increase that was seen at the beginning of the pandemic. 
+
+### Modeling the Data
+It would make sense that deaths and cases are related. 
+
+```{r model}
+lmod <- lm(deaths~cases, data = usTotals)
+summary(lmod)
+
+```
+Looking at this model, the P-value is very low which can indicate that there is a strong relationship here. 
+
+### Bias Statement
+This data set was not chosen by me, it was assigned to me. It is from the Johns Hopkins COVID19 data set on github and is current through August 12 2022. It is possible that not all cases and deaths are reported accurately.
+
+
